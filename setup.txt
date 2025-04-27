@@ -1,0 +1,8 @@
+nvcc --shared -o rules.dll rules.cu -Xcompiler "/MD" -link -cudart static -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.38.33130\bin"
+go build
+
+
+linux:
+sudo apt install nvidia-cuda-toolkit
+nvcc --shared -o librules.so rules.cu -Xcompiler "-fPIC" --cudart static -arch=sm_61  # or higher compute version
+go build

@@ -2,7 +2,7 @@ package main
 
 // aka flaginator
 
-// This tool, originally dubbed FlaggComb, later renamed VavaldiComb and now
+// This tool, originally dubbed PermutationFlagg and later renamed ValdiComb and now
 // renamed to Targinator is a combinator tool combining wordlists and targeted
 // values and is written of celebration of Flagg's work (R.I.P. 2025-03). He was
 // a valued member of the HashMob and Hashpwn community and a good friend to us
@@ -14,24 +14,45 @@ package main
 // 2021.
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/alecthomas/kong"
+	"github.com/schollz/progressbar/v3"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
+type ruleObj struct {
+	ID           uint64
+	Fitness      uint64
+	LastFitness  uint64
+	RuleLine     []Rule
+	PreProcessed bool
+	Hits         map[uint64]struct{}
+	HitsMutex    sync.Mutex
+}
+
+type lineObj struct {
+	ID   uint64
+	line string
+}
+
 type CLI struct {
-	Target     string   `arg:"" help:"Path to target data file (must fit in memory)"`
-	Wordlists  []string `arg:"" help:"Path to wordlist files or directory"`
-	MinTarget  int      `optional:"" short:"m" help:"Minimum target occurrences" default:"1"`
-	MaxTarget  int      `optional:"" short:"x" help:"Maximum target occurrences" default:"3"`
-	Separator  string   `optional:"" short:"s" help:"Word Separator" default:""`
-	OutputFile string   `optional:"" short:"o" help:"Output File" default:""`
+	Target      string   `arg:"" help:"Path to target data file (must fit in memory)"`
+	Wordlists   []string `arg:"" help:"Path to wordlist files or directory"`
+	MinTarget   int      `optional:"" short:"m" help:"Minimum target occurrences" default:"1"`
+	MaxTarget   int      `optional:"" short:"x" help:"Maximum target occurrences" default:"3"`
+	TargetRules string   `optional:"" short:"t" help:"Apply rules file to Target" default:""`
+	Separator   string   `optional:"" short:"s" help:"Word Separator" default:""`
+	OutputFile  string   `optional:"" short:"o" help:"Output File" default:""`
 }
 
 func isDirectory(path string) (bool, error) {
@@ -78,7 +99,110 @@ func loadTargetFile(path string) ([]string, error) {
 	return lines, nil
 }
 
-func generateCombinations(arr []string, k int) [][]string {
+func timer(name string) func() {
+	start := time.Now()
+	return func() {
+		log.Printf("\n%s took %v\n", name, time.Since(start))
+	}
+}
+
+func lineCounter(inputFile string) (int, error) {
+	file, err := os.Open(inputFile)
+	if err != nil {
+		return 0, err
+	}
+
+	defer file.Close()
+	buf := make([]byte, 32*1024)
+	count := 0
+	lineSep := []byte{'\n'}
+
+	for {
+		c, err := file.Read(buf)
+		count += bytes.Count(buf[:c], lineSep)
+		switch {
+		case err == io.EOF:
+			return count, nil
+		case err != nil:
+			return count, err
+		}
+	}
+}
+
+func loadRulesFast(inputFile string) ([]ruleObj, error) {
+	defer timer("loadRules")()
+	ruleLines, _ := lineCounter(inputFile)
+	ruleQueue := make(chan lineObj, 100)
+	ruleOutput := make(chan ruleObj, ruleLines)
+	threadCount := runtime.NumCPU()
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < threadCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for rawLineObj := range ruleQueue {
+				ruleObject, _ := ConvertFromHashcat(rawLineObj.ID, rawLineObj.line)
+				hits := make(map[uint64]struct{})
+				ruleOutput <- ruleObj{rawLineObj.ID, 0, 0, ruleObject, false, hits, sync.Mutex{}}
+			}
+		}()
+	}
+
+	ruleBar := progressbar.NewOptions(ruleLines,
+		progressbar.OptionSetPredictTime(true),
+		progressbar.OptionShowDescriptionAtLineEnd(),
+		progressbar.OptionSetRenderBlankState(true),
+		progressbar.OptionThrottle(500*time.Millisecond),
+		progressbar.OptionShowElapsedTimeOnFinish(),
+		progressbar.OptionSetWidth(25),
+		progressbar.OptionShowIts(),
+		progressbar.OptionShowCount(),
+	)
+	file, err := os.Open(inputFile)
+	if err != nil {
+		return []ruleObj{}, errors.New(fmt.Sprintf("Error opening file: %s", err))
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	ruleLineCounter := uint64(1)
+
+	for scanner.Scan() {
+		lineObject := new(lineObj)
+		lineObject.ID = ruleLineCounter
+		lineObject.line = scanner.Text()
+		if len(lineObject.line) == 0 {
+			continue
+		}
+		ruleQueue <- *lineObject
+		ruleLineCounter++
+		if ruleLineCounter%10000 == 0 {
+			ruleBar.Add(10000)
+		}
+	}
+	ruleBar.Add(int(ruleLineCounter))
+	close(ruleQueue)
+	go func() {
+		wg.Wait()
+		close(ruleOutput)
+	}()
+
+	// Step 1: Consume the channel into a slice
+	var sortedRules []ruleObj
+	for obj := range ruleOutput {
+		sortedRules = append(sortedRules, obj)
+	}
+
+	// Step 2: Sort the slice by ID
+	sort.Slice(sortedRules, func(i, j int) bool {
+		return sortedRules[i].ID < sortedRules[j].ID
+	})
+	ruleBar.Finish()
+	ruleBar.Close()
+	return sortedRules, nil
+}
+
+func generateCombinations(arr []string, arr2 []string, k int) [][]string {
 	var res [][]string
 	var backtrack func(start int, current []string)
 
@@ -101,6 +225,24 @@ func generateCombinations(arr []string, k int) [][]string {
 	return res
 }
 
+func removeMatchingWords(targetDictWithRule, targetFile []string) []string {
+	// Create a map for O(1) lookups
+	removeWords := make(map[string]struct{}, len(targetFile))
+	for _, word := range targetFile {
+		removeWords[word] = struct{}{}
+	}
+
+	// Filter the dictionary
+	result := make([]string, 0, len(targetDictWithRule))
+	for _, word := range targetDictWithRule {
+		if _, exists := removeWords[word]; !exists {
+			result = append(result, word)
+		}
+	}
+
+	return result
+}
+
 func main() {
 	var cli CLI
 	kong.Parse(&cli,
@@ -116,18 +258,67 @@ func main() {
 		log.Fatal(tarErr)
 		return
 	}
-	log.Printf("Loaded %d target words.", len(targetFile))
 
+	process_all_wordlists(targetFile, targetFile, cli, true)
+	if cli.TargetRules != "" { // Run with GPU-accelerated target rules
+		targetRuleFile, tarErr := loadRulesFast(cli.TargetRules)
+		if tarErr != nil {
+			log.Fatal(tarErr)
+			return
+		}
+
+		processBar := progressbar.NewOptions(len(targetFile)*len(targetRuleFile),
+			progressbar.OptionSetPredictTime(true),
+			progressbar.OptionShowDescriptionAtLineEnd(),
+			progressbar.OptionSetRenderBlankState(true),
+			progressbar.OptionThrottle(1000*time.Millisecond),
+			progressbar.OptionShowElapsedTimeOnFinish(),
+			progressbar.OptionSetWidth(25),
+			progressbar.OptionShowIts(),
+			progressbar.OptionShowCount(),
+		)
+
+		originalDictGPUArray := make([]byte, len(targetFile)*32)
+		originalDictGPUArrayLengths := make([]uint32, len(targetFile))
+		for j, word := range targetFile {
+			copy(originalDictGPUArray[j*32:], word)
+			originalDictGPUArrayLengths[j] = uint32(len(word))
+		}
+
+		//sort.Slice(originalHashes, func(i, j int) bool { return originalHashes[i] < originalHashes[j] })
+		//sort.Slice(compareDictHashes, func(i, j int) bool { return compareDictHashes[i] < compareDictHashes[j] })
+		d_originalDict, d_originalDictLengths := CUDAInitialize(&originalDictGPUArray, &originalDictGPUArrayLengths, len(targetFile))
+		for _, targetRule := range targetRuleFile {
+			log.Printf("Running rule: %s", FormatAllRules(targetRule.RuleLine))
+			d_processedDict, d_processedDictLengths := CUDAInitialize(&originalDictGPUArray, &originalDictGPUArrayLengths, len(targetFile))
+			defer CUDADeinitialize(d_processedDict, d_processedDictLengths)
+			targetDictWithRule := CUDASingleRule(
+				&targetRule.RuleLine,
+				d_originalDict, d_originalDictLengths,
+				d_processedDict, d_processedDictLengths,
+				uint64(len(targetFile)),
+			)
+			newTargets := removeMatchingWords(targetDictWithRule, targetFile)
+			process_all_wordlists(targetFile, newTargets, cli, false)
+			processBar.Add(len(targetFile))
+		}
+	}
+	log.Printf("Loaded %d target words.", len(targetFile))
+	log.Println("Done")
+}
+
+func process_all_wordlists(targetFile []string, targetFileRuled []string, cli CLI, debug bool) {
 	// Check all wordlists
 	var validWordlists []string
 	for _, wordlist := range cli.Wordlists {
 		// Skip directories and non-existant stuff
 		if isDir, dirErr := isDirectory(wordlist); isDir || dirErr != nil {
 			if !isDir {
-				log.Printf("%s. It will be skipped", dirErr.Error())
+				if debug {
+					log.Printf("%s. It will be skipped", dirErr.Error())
+				}
 				continue
 			}
-			log.Printf("%s is a directory. Reading files...", wordlist)
 			loadedFiles := 0
 			err := filepath.Walk(wordlist,
 				func(path string, info os.FileInfo, err error) error {
@@ -144,13 +335,19 @@ func main() {
 			if err != nil {
 				log.Println(err)
 			}
-			log.Printf("Loaded %d files from %s recursively", loadedFiles, wordlist)
+			if debug {
+				log.Printf("Loaded %d files from %s recursively", loadedFiles, wordlist)
+			}
 		}
 		if valid, fileErr := isReadable(wordlist); !valid || fileErr != nil {
 			if fileErr != nil {
-				log.Printf("%s. It will be skipped", fileErr.Error())
+				if debug {
+					log.Printf("%s. It will be skipped", fileErr.Error())
+				}
 			} else {
-				log.Printf("%s is invalid. It will be skipped", wordlist)
+				if debug {
+					log.Printf("%s is invalid. It will be skipped", wordlist)
+				}
 			}
 			continue
 		}
@@ -162,16 +359,21 @@ func main() {
 		return
 	}
 
-	log.Printf("Loaded %d wordlists", len(validWordlists))
+	if debug {
+		log.Printf("Loaded %d wordlists", len(validWordlists))
+	}
 	for i := cli.MinTarget; i <= cli.MaxTarget; i++ {
-		log.Printf("Processing length %d", i)
-		combinations := generateCombinations(targetFile, i)
+		if debug {
+			log.Printf("Processing length %d", i)
+		}
+		combinations := generateCombinations(targetFile, targetFileRuled, i)
 		for _, wordlist := range validWordlists {
-			log.Printf("Processing %s", wordlist)
+			if debug {
+				log.Printf("Processing %s", wordlist)
+			}
 			process_wordlist(&combinations, wordlist, cli)
 		}
 	}
-	log.Println("Done")
 }
 
 // loop through lines per file
@@ -201,12 +403,15 @@ func process_wordlist(combinations *[][]string, wordlist string, cli CLI) {
 				buffer += output + "\n"
 				bufferSize += 1
 				if bufferSize == 1000 {
-					if cli.OutputFile == "" {
-						fmt.Print(buffer)
-					}
+					fmt.Print(buffer)
 					buffer = ""
 					bufferSize = 0
 				}
+			}
+			if bufferSize > 0 {
+				fmt.Print(buffer)
+				buffer = ""
+				bufferSize = 0
 			}
 		} else {
 			f, err := os.OpenFile(cli.OutputFile,
@@ -219,14 +424,22 @@ func process_wordlist(combinations *[][]string, wordlist string, cli CLI) {
 			for output := range outputChannel {
 				buffer += output + "\n"
 				bufferSize += 1
-				if bufferSize == 1000 {
-					if _, err := f.WriteString(output + "\n"); err != nil {
+				if bufferSize == 10000 {
+					if _, err := f.WriteString(buffer); err != nil {
 						log.Println(err)
 						os.Exit(-1)
 					}
 					buffer = ""
 					bufferSize = 0
 				}
+			}
+			if bufferSize > 0 {
+				if _, err := f.WriteString(buffer); err != nil {
+					log.Println(err)
+					os.Exit(-1)
+				}
+				buffer = ""
+				bufferSize = 0
 			}
 		}
 	}()
