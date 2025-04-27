@@ -1,17 +1,5 @@
 package main
 
-// aka flaginator
-
-// This tool, originally dubbed PermutationFlagg and later renamed ValdiComb and now
-// renamed to Targinator is a combinator tool combining wordlists and targeted
-// values and is written of celebration of Flagg's work (R.I.P. 2025-03). He was
-// a valued member of the HashMob and Hashpwn community and a good friend to us
-// all. May you rest in peace.
-//
-// By combining specific aspects of a password as well as a targeted wordlist we
-// hit passwords that combine both personal aspects and general aspects of a
-// password. Authored by Vavaldi with the original idea provided by Flagg in
-// 2021.
 import (
 	"bufio"
 	"bytes"
@@ -29,6 +17,19 @@ import (
 	"sync"
 	"time"
 )
+
+// aka flaginator
+
+// This tool, originally dubbed PermutationFlagg and later renamed ValdiComb and now
+// renamed to Targinator is a combinator tool combining wordlists and targeted
+// values and is written of celebration of Flagg's work (R.I.P. 2025-03). He was
+// a valued member of the HashMob and Hashpwn community and a good friend to us
+// all. May you rest in peace.
+//
+// By combining specific aspects of a password as well as a targeted wordlist we
+// hit passwords that combine both personal aspects and general aspects of a
+// password. Authored by Vavaldi with the original idea provided by Flagg in
+// 2021.
 
 type ruleObj struct {
 	ID           uint64
