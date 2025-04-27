@@ -17,7 +17,7 @@ such as:
 And so on until the end of time. This tool named Valdicomb by Flagg - though I personally wouldn't accept it, and kept it at the original name.
 It felt weird to have my name on a tool he inspired, though I ended up changing it a few months later up after seeing a conversation where it was mentioned again.
 
-https://media.discordapp.net/attachments/1363531624280490136/1363622129035383108/image.png?ex=6806b392&is=68056212&hm=66ec7f1b05b6e4807bba6690acc8d9a7273717bea3f070a1ff0ba14bee2c367d&=&format=webp&quality=lossless&width=1217&height=1635
+![image](https://github.com/user-attachments/assets/886bf778-a150-423b-8211-4729b8066bce)
 
 Now I release this tool in his memory hoping that others will see his idea and share in it.
 Rest well Flagg, we miss you.
