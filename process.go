@@ -32,26 +32,34 @@ func applyRuleCPU(rules []Rule, input []string) []string {
 	return out
 }
 
-func generateCombinations(dict []string, k int) [][]string {
+// generateCombinations generates all possible combinations of words from the dictionary for length k
+func generateCombinations(dict []string, targetLength int) [][]string {
 	var res [][]string
-	var backtrack func(start int, current []string)
-
-	backtrack = func(start int, current []string) {
-		if len(current) == k {
-			combination := make([]string, k)
+	used := make([]bool, len(dict)) // Track used elements
+	var backtrack func(current []string)
+	backtrack = func(current []string) {
+		if len(current) == targetLength {
+			// Save a copy of the current permutation
+			combination := make([]string, targetLength)
 			copy(combination, current)
 			res = append(res, combination)
 			return
 		}
+		for i := 0; i < len(dict); i++ {
+			if !used[i] {
+				// Mark element as used and add to current
+				used[i] = true
+				current = append(current, dict[i])
 
-		for i := start; i < len(dict); i++ {
-			current = append(current, dict[i])
-			backtrack(i+1, current)
-			current = current[:len(current)-1]
+				backtrack(current)
+
+				// Backtrack: remove element and mark as unused
+				current = current[:len(current)-1]
+				used[i] = false
+			}
 		}
 	}
-
-	backtrack(0, []string{})
+	backtrack([]string{})
 	return res
 }
 
@@ -71,6 +79,80 @@ func removeMatchingWords(targetDictWithRule, targetFile []string) []string {
 	}
 
 	return result
+}
+
+func binomialCoeficient(n, k int) uint64 {
+	if k < 0 || k > n {
+		return 0
+	}
+	if k == 0 || k == n {
+		return 1
+	}
+	k = min(k, n-k)
+	res := uint64(1)
+	for i := 1; i <= k; i++ {
+		res = res * uint64(n-i+1) / uint64(i)
+	}
+	return res
+}
+
+func calculateKeyspace(targetWordlist []string, cli CLI) int {
+	wordlistLines := 0
+	numTargetRules := 0
+	numWordlistRules := 0
+	wordlistKeyspace := 0
+	totalCombinations := 0
+
+	var wordlists []string
+	if cli.TargetRules != "" {
+		targetRules, err := loadRulesFast(cli.TargetRules)
+		if err != nil {
+			log.Fatal(err)
+		}
+		numTargetRules = len(targetRules)
+	}
+	// Count the number of rules applied to the wordlist
+	if cli.WordlistRules != "" {
+		wordlistRules, err := loadRulesFast(cli.WordlistRules)
+		if err != nil {
+			log.Fatal(err)
+		}
+		numWordlistRules = len(wordlistRules)
+	}
+	if len(cli.Wordlists) > 0 {
+		wordlists = filterByValidWordlistTarget(cli.Wordlists, cli)
+		if len(wordlists) == 0 {
+			log.Fatal("No valid wordlist files specified")
+		}
+		for _, wordlist := range wordlists {
+			var err error
+			wordlistLines, err = lineCounter(wordlist)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if numWordlistRules > 0 {
+				wordlistKeyspace += wordlistLines * numWordlistRules
+			} else {
+				wordlistKeyspace += wordlistLines
+			}
+		}
+	}
+
+	for i := cli.MinTarget; i <= cli.MaxTarget; i++ {
+		if cli.Debug {
+			log.Printf("Processing length %d", i)
+		}
+		combinations := generateCombinations(targetWordlist, i)
+		// i+1 is the possible insertion points
+		if cli.SelfCombination {
+			totalCombinations += len(combinations)
+		}
+		totalCombinations += len(combinations) * (wordlistKeyspace) * (i + 1)
+	}
+	if numTargetRules > 0 {
+		totalCombinations *= numTargetRules + 1
+	}
+	return totalCombinations
 }
 
 func filterByValidWordlistTarget(wordlists []string, cli CLI) []string {
@@ -122,14 +204,10 @@ func filterByValidWordlistTarget(wordlists []string, cli CLI) []string {
 	return validWordlists
 }
 
-func process_all_wordlists(targetFile []string, cli CLI) {
+func processAllWordlists(targetFile []string, cli CLI) {
 	// Check all wordlists
-	validWordlists := filterByValidWordlistTarget(cli.Wordlists, cli)
-	if len(validWordlists) == 0 {
-		log.Fatalf("No valid wordlists founds.")
-		return
-	}
 
+	validWordlists := filterByValidWordlistTarget(cli.Wordlists, cli)
 	if cli.Debug {
 		log.Printf("Loaded %d wordlists", len(validWordlists))
 	}
@@ -140,48 +218,32 @@ func process_all_wordlists(targetFile []string, cli CLI) {
 			log.Printf("Processing length %d", i)
 		}
 		combinations := generateCombinations(targetFile, i)
-		for _, wordlist := range validWordlists {
-			if cli.Debug {
-				log.Printf("Processing %s", wordlist)
+
+		if cli.SelfCombination {
+			processWordlist(&combinations, "", cli, skipCounter)
+		}
+		if len(validWordlists) > 0 {
+			for _, wordlist := range validWordlists {
+				if cli.Debug {
+					log.Printf("Processing %s", wordlist)
+				}
+				processWordlist(&combinations, wordlist, cli, skipCounter)
 			}
-			process_wordlist(&combinations, wordlist, cli, skipCounter)
 		}
 	}
 	return
 }
 
 // loop through lines per file
-func process_wordlist(combinations *[][]string, wordlist string, cli CLI, skipCounter uint64) {
-	// preload entire wordlist once with buffered reader
-	file, err := os.Open(wordlist)
-	if err != nil {
-		log.Fatalf("opening wordlist %s: %v", wordlist, err)
-	}
-	defer file.Close()
-
-	reader := bufio.NewReaderSize(file, 1<<20) // 1 MiB buffer
-	var fullWL []string
-	for {
-		line, err := reader.ReadString('\n')
-		if err == io.EOF {
-			if len(line) > 0 {
-				fullWL = append(fullWL, checkForHex(strings.TrimSuffix(line, "\n"))) // run through checkForHex()
-			}
-			break
-		}
-		if err != nil {
-			log.Fatalf("reading wordlist %s: %v", wordlist, err)
-		}
-		fullWL = append(fullWL, checkForHex(strings.TrimSuffix(line, "\n"))) // run through checkForHex()
-	}
-
+func processWordlist(combinations *[][]string, wordlist string, cli CLI, skipCounter uint64) {
 	// setup writer with a buffered channel (stdout or file)
+	var err error
 	var (
 		writer io.Writer
 		outF   *os.File
 	)
 	if cli.OutputFile != "" {
-		outF, err = os.Create(cli.OutputFile)
+		outF, err = os.OpenFile(cli.OutputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "creating output file %q: %v\n", cli.OutputFile, err)
 			os.Exit(1)
@@ -204,6 +266,39 @@ func process_wordlist(combinations *[][]string, wordlist string, cli CLI, skipCo
 		}
 		wr.Flush()
 	}()
+
+	// if no wordlist is provided print the combinations without modification
+	if wordlist == "" {
+		for _, arr := range *combinations {
+			outputChannel <- strings.Join(arr, cli.Separator)
+		}
+		close(outputChannel)
+		wgOutput.Wait()
+		return
+	}
+
+	// preload entire wordlist once with buffered reader
+	file, err := os.Open(wordlist)
+	if err != nil {
+		log.Fatalf("opening wordlist %s: %v", wordlist, err)
+	}
+	defer file.Close()
+
+	reader := bufio.NewReaderSize(file, 1<<20) // 1 MiB buffer
+	var fullWL []string
+	for {
+		line, err := reader.ReadString('\n')
+		if err == io.EOF {
+			if len(line) > 0 {
+				fullWL = append(fullWL, checkForHex(strings.TrimSuffix(line, "\n"))) // run through checkForHex()
+			}
+			break
+		}
+		if err != nil {
+			log.Fatalf("reading wordlist %s: %v", wordlist, err)
+		}
+		fullWL = append(fullWL, checkForHex(strings.TrimSuffix(line, "\n"))) // run through checkForHex()
+	}
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, runtime.NumCPU())
@@ -236,18 +331,17 @@ func process_wordlist(combinations *[][]string, wordlist string, cli CLI, skipCo
 					skipCounter += uint64(len(*combinations))
 					continue
 				}
-				outputChannel <- wordLine
 
 				sem <- struct{}{}
 				wg.Add(1)
-				go func(combos *[][]string, wordx string) {
+				go func(combos *[][]string, word string) {
 					defer wg.Done()
 					defer func() { <-sem }()
 					for _, combo := range *combos {
 						for i := 0; i <= len(combo); i++ {
 							newCombo := make([]string, len(combo)+1)
 							copy(newCombo, combo[:i])
-							newCombo[i] = wordx
+							newCombo[i] = word
 							copy(newCombo[i+1:], combo[i:])
 							outputChannel <- strings.Join(newCombo, cli.Separator)
 						}
@@ -266,18 +360,17 @@ func process_wordlist(combinations *[][]string, wordlist string, cli CLI, skipCo
 				skipCounter += uint64(len(*combinations))
 				continue
 			}
-			outputChannel <- wordLine
 
 			sem <- struct{}{}
 			wg.Add(1)
-			go func(combos *[][]string, wordx string) {
+			go func(combos *[][]string, word string) {
 				defer wg.Done()
 				defer func() { <-sem }()
 				for _, combo := range *combos {
 					for i := 0; i <= len(combo); i++ {
 						newCombo := make([]string, len(combo)+1)
 						copy(newCombo, combo[:i])
-						newCombo[i] = wordx
+						newCombo[i] = word
 						copy(newCombo[i+1:], combo[i:])
 						outputChannel <- strings.Join(newCombo, cli.Separator)
 					}

@@ -96,6 +96,7 @@ func loadRulesFast(inputFile string) ([]*ruleObj, error) {
 		ID   uint64
 		line string
 	}
+	
 	taskCh := make(chan task, runtime.NumCPU())
 	var (
 		mu      sync.Mutex

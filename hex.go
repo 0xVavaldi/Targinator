@@ -8,6 +8,10 @@ import (
 
 // de-$HEX[] lines
 func checkForHex(line string) string {
+	if strings.HasSuffix(line, "\r") {
+		line = strings.TrimSuffix(line, "\r")
+	}
+
 	if !strings.HasPrefix(line, "$HEX[") {
 		return line
 	}
