@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 
 	"github.com/alecthomas/kong"
@@ -33,12 +32,6 @@ type ruleObj struct {
 	HitsMutex    sync.Mutex
 }
 
-var kill = sync.Mutex{}
-
-var builderPool = sync.Pool{
-	New: func() interface{} { return new(strings.Builder) },
-}
-
 type lineObj struct {
 	ID   uint64
 	line string
@@ -65,7 +58,7 @@ func main() {
 	var cli CLI
 	kong.Parse(&cli,
 		kong.Name("Targinator"),
-		kong.Description("A self-combinator using a targeted and generic wordlist - v0.0.1-2025-06-07-dev"),
+		kong.Description("A self-combinator using a targeted and generic wordlist - v0.0.1-2025-06-14-dev"),
 		kong.UsageOnError(),
 	)
 
