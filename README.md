@@ -61,8 +61,5 @@ such as:
 - 2006JamesBondJamesBond
 
 And so on until the end of time. This tool was named Valdicomb by Flagg though retained the original name PermutationFlagg in the folder structure so the included 7z is that same folder for the original project.
-
-![image](https://github.com/user-attachments/assets/886bf778-a150-423b-8211-4729b8066bce)
-
-Now I release this tool in his memory hoping that others will see his idea and share it.
+Now I release this tool in his memory hoping that others will see his idea and find good use for it.
 Rest well Flagg, we miss you.
