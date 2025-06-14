@@ -5,6 +5,8 @@ For the last few months I've slowly been working on this project in my free time
 
 This tool functions as a semi-infinite combinator with wordlists and some extra options.
 
+Authored by Vavaldi with performance optimizations by Cyclone
+
 # Quick Start
 First, **Install GoLang**. Then run the following commands:
 or on linux:
@@ -57,6 +59,7 @@ such as:
 - James2006BondJames
 - Bond2006JamesBond
 - 2006JamesBondJamesBond
+
 And so on until the end of time. This tool was named Valdicomb by Flagg though retained the original name PermutationFlagg in the folder structure so the included 7z is that same folder for the original project.
 
 ![image](https://github.com/user-attachments/assets/886bf778-a150-423b-8211-4729b8066bce)
