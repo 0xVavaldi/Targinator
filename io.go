@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -60,29 +59,6 @@ func loadTargetFile(path string) ([]string, error) {
 	return lines, nil
 }
 
-func lineCounter(inputFile string) (int, error) {
-	file, err := os.Open(inputFile)
-	if err != nil {
-		return 0, err
-	}
-
-	defer file.Close()
-	buf := make([]byte, 128*1024)
-	count := 0
-	lineSep := []byte{'\n'}
-
-	for {
-		c, err := file.Read(buf)
-		count += bytes.Count(buf[:c], lineSep)
-		switch {
-		case err == io.EOF:
-			return count, nil
-		case err != nil:
-			return count, err
-		}
-	}
-}
-
 func loadRulesFast(inputFile string) ([]*ruleObj, error) {
 	file, err := os.Open(inputFile)
 	if err != nil {
@@ -96,7 +72,7 @@ func loadRulesFast(inputFile string) ([]*ruleObj, error) {
 		ID   uint64
 		line string
 	}
-	
+
 	taskCh := make(chan task, runtime.NumCPU())
 	var (
 		mu      sync.Mutex
