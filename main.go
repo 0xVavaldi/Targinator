@@ -70,6 +70,9 @@ func main() {
 		log.Fatal("PartialDeduplicate and Keyspace are mutually exclusive as deduplication affects the keyspace")
 		return
 	}
+	if cli.MinTarget > cli.MaxTarget {
+		log.Fatalf("MinTarget (%d) must be less than or equal to MaxTarget (%d)", cli.MinTarget, cli.MaxTarget)
+	}
 
 	targetFile, tarErr := loadTargetFile(cli.Target)
 	if tarErr != nil {
