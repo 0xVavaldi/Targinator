@@ -56,7 +56,7 @@ type CLI struct {
 	Keyspace           bool     `optional:"" help:"Show keyspace for attack (used for HTP)" default:"false"`
 	Skip               uint64   `optional:"" help:"Skip initial N generated candidates (used for HTP)" default:"0"`
 	Limit              uint64   `optional:"" help:"Stop attack early after N generated candidates (used for HTP)" default:"0"`
-	SelfCombination    bool     `optional:"" help:"Combine without using a wordlist (default True)" default:"true"`
+	SelfCombination    bool     `optional:"" help:"Combine without using a wordlist [default: True]" default:"true"`
 	PartialDeduplicate bool     `optional:"" help:"Help reduce the amount of duplicates" default:"false"`
 	Debug              bool     `optional:"" help:"Show Debug Messages" default:"false"`
 }
@@ -92,8 +92,6 @@ func main() {
 		return
 	}
 
-	processAllWordlists(targetFile, cli)
-	// striped out all C / CUDA / GPU code and replaced with Pure Go CPU logic
 	// run target rules on CPU
 	if cli.TargetRules != "" {
 		targetRuleFile, tarErr := loadRulesFast(cli.TargetRules)
@@ -115,9 +113,11 @@ func main() {
 				newWords = removeMatchingWords(newWords, targetFile)
 			}
 			if len(newWords) > 0 {
-				processAllWordlists(newWords, cli)
+				processAllWordlists(targetFile, newWords, cli)
 			}
 		}
+	} else {
+		processAllWordlists(targetFile, []string{}, cli)
 	}
 
 	if cli.Debug {

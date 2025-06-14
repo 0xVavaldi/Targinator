@@ -25,6 +25,8 @@ type Rule struct {
 	NumericParameter1 int
 	Parameter2        string
 	NumericParameter2 int
+	Parameter3        string
+	NumericParameter3 int
 	Process           func(string) string // A lambda function for improved processing
 }
 
@@ -110,8 +112,11 @@ func ParameterCountRule(rule string) (int, error) {
 	case '@', 'T', 'p', 'D', 'Z', 'z', '$', '^', '<', '>', '_', '\'', '!', '/', 'y', 'Y', '-', '+', 'e', '.', ',', 'L', 'R':
 		return 1, nil
 	// two-parameter
-	case 's', 'S', 'x', 'O', 'o', 'i', '3', '*':
+	case 's', 'x', 'O', 'o', 'i', '3', '*':
 		return 2, nil
+	// three-parameter
+	case 'S':
+		return 3, nil
 	}
 	return -1, errors.New("Unknown Function")
 }
@@ -154,6 +159,9 @@ func ParseSingleRule(originalRule string) (Rule, error) {
 	if parameterCount >= 2 {
 		myRule.Parameter2 = originalRule[2:3]
 	}
+	if parameterCount >= 3 {
+		myRule.Parameter3 = originalRule[3:4]
+	}
 
 	alphabet := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	if strings.Contains(alphabet, myRule.Parameter1) && len(myRule.Parameter1) > 0 {
@@ -161,6 +169,9 @@ func ParseSingleRule(originalRule string) (Rule, error) {
 	}
 	if strings.Contains(alphabet, myRule.Parameter2) && len(myRule.Parameter2) > 0 {
 		myRule.NumericParameter2 = strings.IndexRune(alphabet, rune(myRule.Parameter2[0]))
+	}
+	if strings.Contains(alphabet, myRule.Parameter3) && len(myRule.Parameter3) > 0 {
+		myRule.NumericParameter3 = strings.IndexRune(alphabet, rune(myRule.Parameter3[0]))
 	}
 
 	switch myRule.Function {
@@ -350,9 +361,24 @@ func ParseSingleRule(originalRule string) (Rule, error) {
 		myRule.Process = func(input string) string {
 			return strings.ReplaceAll(input, myRule.Parameter1, myRule.Parameter2)
 		}
-	case "S":
+	case "S": // Replace nth occurrence of character. S0ab replace the first 'a' with 'b'. SAs$ replace the 10th s with $
 		myRule.Process = func(input string) string {
-			return strings.Replace(input, myRule.Parameter1, myRule.Parameter2, 1)
+			if n := myRule.NumericParameter1; n >= 0 && myRule.Parameter2 != "" && myRule.Parameter3 != "" {
+				var pos, count int
+				for {
+					if idx := strings.Index(input[pos:], myRule.Parameter2); idx >= 0 {
+						if count == n {
+							pos += idx
+							return input[:pos] + myRule.Parameter3 + input[pos+len(myRule.Parameter2):]
+						}
+						count++
+						pos += idx + len(myRule.Parameter2)
+					} else {
+						break
+					}
+				}
+			}
+			return input
 		}
 	case "$":
 		myRule.Process = func(input string) string {
@@ -583,6 +609,7 @@ func ParseSingleRule(originalRule string) (Rule, error) {
 func (r *Rule) PrintFormat() string {
 	s1 := strings.ReplaceAll(r.Parameter1, "\t", "\\x09")
 	s2 := strings.ReplaceAll(r.Parameter2, "\t", "\\x09")
+	s3 := strings.ReplaceAll(r.Parameter3, "\t", "\\x09")
 	pc, _ := ParameterCountRule(r.Function)
 	switch pc {
 	case 0:
@@ -594,6 +621,11 @@ func (r *Rule) PrintFormat() string {
 			return fmt.Sprintf("%s/%s/%s", r.Function, s1, s2)
 		}
 		return r.Function + s1 + s2
+	case 3:
+		if len(r.Parameter1) > 1 || len(r.Parameter2) > 1 || len(r.Parameter3) > 1 {
+			return fmt.Sprintf("%s/%s/%s/%s", r.Function, s1, s2, s3)
+		}
+		return r.Function + s1 + s2 + s3
 	}
 	return ""
 }
@@ -617,72 +649,80 @@ func FormatAllRules(all []Rule, delim ...string) string {
 // ConvertFromHashcat converts a line of hashcat compatible rules to an array of Rule objects.
 // Done by first converting to TSV and then using ParseTSVRules to convert to Rule objects.
 func ConvertFromHashcat(lineCounter uint64, rawLine string) ([]Rule, error) {
+	if len(rawLine) == 0 {
+		return nil, fmt.Errorf("empty rule on line [%d]", lineCounter)
+	}
+
 	// Sets of each rawLine width
 	singleWide := ":lucCtrdf{}[]kKqE"
 	doubleWide := "TpDZz$^<>_'!/@-+yYLR.,e"
 	tripleWide := "sxOoi*3"
+	quadrupleWide := "S"
 
 	var formattedRule strings.Builder
 	offset := 0
 
 	for offset < len(rawLine) {
 		baseRule := rawLine[offset]
-		// Skip if it's the space separator
-		if baseRule == ' ' {
+
+		switch {
+		case baseRule == ' ':
 			offset++
-		} else if strings.Contains(singleWide, string(baseRule)) {
-			// Check if the rawLine is 1 character wide
+
+		case strings.Contains(singleWide, string(baseRule)):
 			formattedRule.WriteString(rawLine[offset:offset+1] + "\t")
 			offset++
-		} else if strings.Contains(doubleWide, string(baseRule)) {
-			// Check if the rawLine is 2 characters wide
+
+		case strings.Contains(doubleWide, string(baseRule)):
 			if offset+3 < len(rawLine) && rawLine[offset+1:offset+3] == "\\x" {
-				// Check for hex notation
 				if offset+5 > len(rawLine) {
-					return nil, errors.New(fmt.Sprintf("Missing rule parameters on line [%d]: \"%s\"\n", lineCounter, rawLine))
+					return nil, fmt.Errorf("missing hex parameters on line [%d]: \"%s\"", lineCounter, rawLine)
 				}
 				formattedRule.WriteString(rawLine[offset:offset+5] + "\t")
 				offset += 5
 			} else {
 				if offset+2 > len(rawLine) {
-					return nil, errors.New(fmt.Sprintf("Missing rule parameters on line [%d]: \"%s\"\n", lineCounter, rawLine))
+					return nil, fmt.Errorf("missing rule parameters on line [%d]: \"%s\"", lineCounter, rawLine)
 				}
 				formattedRule.WriteString(rawLine[offset:offset+2] + "\t")
 				offset += 2
 			}
-		} else if strings.Contains(tripleWide, string(baseRule)) {
-			// Check if the rawLine is 3 characters wide
+
+		case strings.Contains(tripleWide, string(baseRule)):
 			if offset+9 <= len(rawLine) && rawLine[offset+1:offset+3] == "\\x" && rawLine[offset+5:offset+7] == "\\x" {
-				// Check for double hex notation
 				formattedRule.WriteString(rawLine[offset:offset+9] + "\t")
 				offset += 9
 			} else if offset+6 <= len(rawLine) && (rawLine[offset+1:offset+3] == "\\x" || rawLine[offset+2:offset+4] == "\\x") {
-				// Check for single hex notation
 				formattedRule.WriteString(rawLine[offset:offset+6] + "\t")
 				offset += 6
 			} else {
 				if offset+3 > len(rawLine) {
-					return nil, errors.New(fmt.Sprintf("Missing rule parameters on line [%d]: \"%s\"\n", lineCounter, rawLine))
+					return nil, fmt.Errorf("missing rule parameters on line [%d]: \"%s\"", lineCounter, rawLine)
 				}
 				formattedRule.WriteString(rawLine[offset:offset+3] + "\t")
 				offset += 3
 			}
-		} else if baseRule == '#' {
-			// Ignore if the line is a comment
-			offset = 254
-		} else {
-			// Error if the baseRule is unknown
-			offset = 254
-			return nil, errors.New(fmt.Sprintf("Unknown rule function \"%c\" on line [%d]: \"%s\"\n", baseRule, lineCounter, rawLine))
+
+		case strings.Contains(quadrupleWide, string(baseRule)):
+			if offset+12 <= len(rawLine) && rawLine[offset+1:offset+3] == "\\x" && rawLine[offset+5:offset+7] == "\\x" && rawLine[offset+9:offset+11] == "\\x" {
+				formattedRule.WriteString(rawLine[offset:offset+12] + "\t")
+				offset += 12
+			} else {
+				if offset+4 > len(rawLine) {
+					return nil, fmt.Errorf("missing rule parameters on line [%d]: \"%s\"", lineCounter, rawLine)
+				}
+				formattedRule.WriteString(rawLine[offset:offset+4] + "\t")
+				offset += 4
+			}
+
+		case baseRule == '#':
+			break // Exit loop on comments
+
+		default:
+			return nil, fmt.Errorf("unknown rule function \"%c\" on line [%d]", baseRule, lineCounter)
 		}
 	}
-	// Remove last tab character
-	TSVResult := formattedRule.String()
-	if strings.HasSuffix(TSVResult, "\t") {
-		TSVResult = TSVResult[:len(TSVResult)-1]
-	}
-
-	// Convert from TSV to actual Rule Objects
-	rules, _ := ParseTSVRules(lineCounter, TSVResult)
-	return rules, nil
+	// Remove last tab if exists
+	TSVResult := strings.TrimSuffix(formattedRule.String(), "\t")
+	return ParseTSVRules(lineCounter, TSVResult)
 }
