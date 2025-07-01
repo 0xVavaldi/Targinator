@@ -12,28 +12,6 @@ import (
 	"sync"
 )
 
-func applyRuleCPU(rules []Rule, input []string) []string {
-	out := make([]string, len(input))
-	sem := make(chan struct{}, runtime.NumCPU())
-	var wg sync.WaitGroup
-	for i, w := range input {
-		sem <- struct{}{}
-		wg.Add(1)
-		go func(i int, w string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			for _, rule := range rules {
-				w = rule.Process(w)
-			}
-			if len(rules) != 1 || rules[0].Function != ":" {
-				out[i] = w
-			}
-		}(i, w)
-	}
-	wg.Wait()
-	return out
-}
-
 // generateCombinations generates all possible combinations of words from the dictionary for length k
 func generateCombinations(dict []string, targetLength int) [][]string {
 	var res [][]string
@@ -69,6 +47,83 @@ func generateCombinations(dict []string, targetLength int) [][]string {
 // start AI
 // start AI
 // start AI
+func insertAt(comb []string, word string, pos int) []string {
+	newc := make([]string, len(comb)+1)
+	copy(newc, comb[:pos])
+	newc[pos] = word
+	copy(newc[pos+1:], comb[pos:])
+	return newc
+}
+
+// Iterative generator for combinations
+func generateCombinationsIter(dict []string, targetLength int) <-chan []string {
+	ch := make(chan []string, 100)
+	go func() {
+		defer close(ch)
+		if targetLength == 0 {
+			return
+		}
+
+		used := make([]bool, len(dict))
+		var backtrack func(int, []string)
+		backtrack = func(start int, current []string) {
+			if len(current) == targetLength {
+				comb := make([]string, targetLength)
+				copy(comb, current)
+				ch <- comb
+				return
+			}
+
+			for i := start; i < len(dict); i++ {
+				if !used[i] {
+					used[i] = true
+					backtrack(i+1, append(current, dict[i]))
+					used[i] = false
+				}
+			}
+		}
+		backtrack(0, []string{})
+	}()
+	return ch
+}
+
+// Iterative generator for permutations
+func generatePermutationsIter(arr []string, length int) <-chan []string {
+	ch := make(chan []string, 100)
+	go func() {
+		defer close(ch)
+		if length == 0 {
+			return
+		}
+		n := len(arr)
+		if n < length {
+			return
+		}
+
+		used := make([]bool, n)
+		var backtrack func([]string)
+		backtrack = func(current []string) {
+			if len(current) == length {
+				tmp := make([]string, length)
+				copy(tmp, current)
+				ch <- tmp
+				return
+			}
+
+			for i := 0; i < n; i++ {
+				if !used[i] {
+					used[i] = true
+					backtrack(append(current, arr[i]))
+					used[i] = false
+				}
+			}
+		}
+		backtrack([]string{})
+	}()
+	return ch
+}
+
+// Remove duplicate strings
 func removeDuplicates(slice []string) []string {
 	seen := make(map[string]bool)
 	result := []string{}
@@ -81,6 +136,7 @@ func removeDuplicates(slice []string) []string {
 	return result
 }
 
+// Remove strings present in another slice
 func removeStringsPresentIn(slice, toRemove []string) []string {
 	removeSet := make(map[string]bool)
 	for _, s := range toRemove {
@@ -93,6 +149,68 @@ func removeStringsPresentIn(slice, toRemove []string) []string {
 		}
 	}
 	return result
+}
+
+// Iterative generator for ruled combinations
+func generateRuledCombinationsIter(dict []string, ruledDict []string, targetLength int) <-chan []string {
+	ch := make(chan []string, 100)
+	go func() {
+		defer close(ch)
+		dict = removeDuplicates(dict)
+		ruledDict = removeDuplicates(ruledDict)
+		ruledDict = removeStringsPresentIn(ruledDict, dict)
+
+		A := dict
+		B := ruledDict
+		nA := len(A)
+		nB := len(B)
+
+		for k := 1; k <= targetLength && k <= nB; k++ {
+			if targetLength-k > nA {
+				continue
+			}
+
+			positionCombs := generatePositionCombinations(targetLength, k)
+			for _, posSet := range positionCombs {
+				for permB := range generatePermutationsIter(B, k) {
+					for permA := range generatePermutationsIter(A, targetLength-k) {
+						comb := make([]string, targetLength)
+						for idx, pos := range posSet.ruledPositions {
+							comb[pos] = permB[idx]
+						}
+						for idx, pos := range posSet.unruledPositions {
+							comb[pos] = permA[idx]
+						}
+						ch <- comb
+					}
+				}
+			}
+		}
+	}()
+	return ch
+}
+
+// CPU rules application (unchanged from original)
+func applyRuleCPU(rules []Rule, input []string) []string {
+	out := make([]string, len(input))
+	sem := make(chan struct{}, runtime.NumCPU())
+	var wg sync.WaitGroup
+	for i, w := range input {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(i int, w string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			for _, rule := range rules {
+				w = rule.Process(w)
+			}
+			if len(rules) != 1 || rules[0].Function != ":" {
+				out[i] = w
+			}
+		}(i, w)
+	}
+	wg.Wait()
+	return out
 }
 
 type positionSet struct {
@@ -216,6 +334,115 @@ func generateRuledCombinations(dict []string, ruledDict []string, targetLength i
 	}
 
 	return res
+}
+
+func processAllWordlists(targetFile []string, ruledFile []string, cli CLI) {
+	validWordlists := filterByValidWordlistTarget(cli.Wordlists, cli)
+	if cli.Debug {
+		log.Printf("Loaded %d wordlists", len(validWordlists))
+	}
+
+	// Setup output writer
+	writer := createOutputWriter(cli)
+	defer writer.Flush()
+
+	// Process each length in strict order
+	for length := cli.MinTarget; length <= cli.MaxTarget; length++ {
+		if cli.Debug {
+			log.Printf("Processing length %d", length)
+		}
+
+		// Process self-combinations first
+		if cli.SelfCombination {
+			processLength(targetFile, ruledFile, length, "", cli, writer)
+		}
+
+		// Process each wordlist for this length
+		for _, wordlist := range validWordlists {
+			if cli.Debug {
+				log.Printf("Processing %s at length %d", wordlist, length)
+			}
+			processLength(targetFile, ruledFile, length, wordlist, cli, writer)
+		}
+	}
+}
+
+func processLength(
+	targetFile, ruledFile []string,
+	length int,
+	wordlist string,
+	cli CLI,
+	writer *bufio.Writer,
+) {
+	// Create fresh generator for this length
+	var generator <-chan []string
+	if len(ruledFile) > 0 {
+		generator = generateRuledCombinationsIter(targetFile, ruledFile, length)
+	} else {
+		generator = generateCombinationsIter(targetFile, length)
+	}
+
+	if wordlist == "" {
+		// Directly write combinations
+		for combo := range generator {
+			writer.WriteString(strings.Join(combo, cli.Separator))
+			writer.WriteByte('\n')
+		}
+		return
+	}
+
+	// Process wordlist with rules
+	words, err := readWordlist(wordlist)
+	if err != nil {
+		log.Fatalf("Error reading wordlist %s: %v", wordlist, err)
+	}
+
+	var processedWords []string
+	if cli.WordlistRules != "" {
+		rules, err := loadRulesFast(cli.WordlistRules)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, rule := range rules {
+			processedWords = append(processedWords, applyRuleCPU(rule.RuleLine, words)...)
+		}
+	} else {
+		processedWords = words
+	}
+
+	// Process each word with fresh generator
+	for _, word := range processedWords {
+		// Regenerate combinations for each word to ensure complete enumeration
+		if len(ruledFile) > 0 {
+			generator = generateRuledCombinationsIter(targetFile, ruledFile, length)
+		} else {
+			generator = generateCombinationsIter(targetFile, length)
+		}
+
+		for combo := range generator {
+			// Generate all possible insertions of word into combo
+			for pos := 0; pos <= len(combo); pos++ {
+				newCombo := make([]string, len(combo)+1)
+				copy(newCombo, combo[:pos])
+				newCombo[pos] = word
+				copy(newCombo[pos+1:], combo[pos:])
+				writer.WriteString(strings.Join(newCombo, cli.Separator))
+				writer.WriteByte('\n')
+			}
+		}
+	}
+}
+
+func createOutputWriter(cli CLI) *bufio.Writer {
+	var output io.Writer = os.Stdout
+	if cli.OutputFile != "" {
+		file, err := os.OpenFile(cli.OutputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatalf("Error creating output file: %v", err)
+		}
+		output = file
+	}
+	return bufio.NewWriterSize(output, 1<<20) // 1MB buffer
 }
 
 // END AI
@@ -450,45 +677,6 @@ func filterByValidWordlistTarget(wordlists []string, cli CLI) []string {
 		validWordlists = append(validWordlists, wordlist)
 	}
 	return validWordlists
-}
-
-func processAllWordlists(targetFile []string, ruledFile []string, cli CLI) {
-	// Check all wordlists
-
-	validWordlists := filterByValidWordlistTarget(cli.Wordlists, cli)
-	if cli.Debug {
-		log.Printf("Loaded %d wordlists", len(validWordlists))
-	}
-	skipCounter := uint64(0)
-
-	for i := cli.MinTarget; i <= cli.MaxTarget; i++ {
-		if cli.Debug {
-			log.Printf("Processing length %d", i)
-		}
-		combinations := [][]string{}
-		if len(ruledFile) > 0 {
-			combinations = generateRuledCombinations(targetFile, ruledFile, i)
-		} else {
-			combinations = generateCombinations(targetFile, i)
-		}
-		if len(combinations) == 0 {
-			continue
-		}
-
-		if cli.SelfCombination {
-			processWordlist(&combinations, "", cli, skipCounter)
-		}
-
-		if len(validWordlists) > 0 {
-			for _, wordlist := range validWordlists {
-				if cli.Debug {
-					log.Printf("Processing %s", wordlist)
-				}
-				processWordlist(&combinations, wordlist, cli, skipCounter)
-			}
-		}
-	}
-	return
 }
 
 // loop through lines per file

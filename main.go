@@ -66,13 +66,16 @@ func main() {
 	if cli.Debug {
 		log.Println("Loading Target File:", cli.Target)
 	}
+
 	if cli.PartialDeduplicate && cli.Keyspace {
 		log.Fatal("PartialDeduplicate and Keyspace are mutually exclusive as deduplication affects the keyspace")
 		return
 	}
+
 	if cli.MinTarget <= 0 {
 		log.Fatalf("MinTarget (%d) must be greater than 0", cli.MinTarget)
 	}
+
 	if cli.MinTarget > cli.MaxTarget {
 		log.Fatalf("MinTarget (%d) must be less than or equal to MaxTarget (%d)", cli.MinTarget, cli.MaxTarget)
 	}
