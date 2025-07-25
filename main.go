@@ -2,10 +2,9 @@ package main
 
 import (
 	"fmt"
+	"github.com/alecthomas/kong"
 	"log"
 	"sync"
-
-	"github.com/alecthomas/kong"
 )
 
 /*
@@ -58,7 +57,7 @@ func main() {
 	var cli CLI
 	kong.Parse(&cli,
 		kong.Name("Targinator"),
-		kong.Description("A self-combinator using a targeted and generic wordlist - v1.0.0"),
+		kong.Description("A self-combinator using a targeted and generic wordlist - v1.1.0"),
 		kong.UsageOnError(),
 	)
 
