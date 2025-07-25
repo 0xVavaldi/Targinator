@@ -716,7 +716,7 @@ func ConvertFromHashcat(lineCounter uint64, rawLine string) ([]Rule, error) {
 			}
 
 		case baseRule == '#':
-			break // Exit loop on comments
+			return nil, nil // Exit loop on comments
 
 		default:
 			return nil, fmt.Errorf("unknown rule function \"%c\" on line [%d]", baseRule, lineCounter)
