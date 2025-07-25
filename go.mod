@@ -1,4 +1,4 @@
-module targinator
+module github.com/0xVavaldi/Targinator
 
 go 1.24.3
 
